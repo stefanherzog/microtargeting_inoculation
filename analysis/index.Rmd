@@ -1,0 +1,12 @@
+---
+title: "A simple self-reflection intervention boosts the detection of targeted advertising"
+site: workflowr::wflow_site
+output:
+  workflowr::wflow_html:
+    toc: false
+editor_options:
+  chunk_output_type: console
+---
+
+Data and code for manuscript "A simple self-reflection intervention boosts the detection of targeted advertising".
+All data & code to reproduce the analyses reported in this paper are available in this repo.

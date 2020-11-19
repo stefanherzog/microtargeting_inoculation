@@ -1,0 +1,30 @@
+ Family: bernoulli 
+  Links: mu = logit 
+Formula: dec_correct ~ 1 + condition + (1 | id) + (1 + condition | stimuli) 
+   Data: tbl_targeting_1 (Number of observations: 2840) 
+Samples: 4 chains, each with iter = 8000; warmup = 4000; thin = 1;
+         total post-warmup samples = 16000
+
+Group-Level Effects: 
+~id (Number of levels: 284) 
+              Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+sd(Intercept)     1.52      0.11     1.32     1.75 1.00     6358    10048
+
+~stimuli (Number of levels: 10) 
+                          Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS
+sd(Intercept)                 0.48      0.14     0.28     0.92 1.00     5852
+sd(condition1)                0.20      0.16     0.01     0.63 1.00     6142
+cor(Intercept,condition1)     0.29      0.55    -0.83     0.95 1.00    18907
+                          Tail_ESS
+sd(Intercept)                 9267
+sd(condition1)                7713
+cor(Intercept,condition1)    10651
+
+Population-Level Effects: 
+           Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
+Intercept      1.38      0.20     0.97     1.79 1.00     5350     8842
+condition1     1.62      0.24     1.16     2.10 1.00     6967    10456
+
+Samples were drawn using sampling(NUTS). For each parameter, Bulk_ESS
+and Tail_ESS are effective sample size measures, and Rhat is the potential
+scale reduction factor on split chains (at convergence, Rhat = 1).

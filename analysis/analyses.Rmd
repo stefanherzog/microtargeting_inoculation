@@ -1,0 +1,1200 @@
+---
+title: "Analyses"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = FALSE,
+  warning = TRUE,
+  cache = FALSE,
+  autodep = TRUE
+  )
+
+```
+
+
+
+# Load dependencies
+
+Source `dependencies.R`.
+
+```{r dependencies, message=FALSE, cache=FALSE, code=readr::read_lines(here::here("code/_dependencies.R"))}
+source(here::here("code/_dependencies.R"))
+
+```
+
+
+
+
+
+
+# Experiment 1
+
+## Load data
+
+```{r load_data_experiment1}
+tbl_participants_1 <- read_rds(here("output/study1/tbl_participants.rds"))
+tbl_targeting_1 <- read_rds(here("output/study1/tbl_targeting.rds"))
+
+```
+
+
+## Augment data
+
+```{r tbl_targeting_performance_1}
+tbl_targeting_performance_1 <- tbl_targeting_1 %>%
+  group_by_at(vars(
+    id,
+    condition,
+    contains("extr"),
+    contains("ATI")
+  )) %>%
+  summarize(acc = mean(dec_correct),
+            conf_in_correct = mean(conf_in_correct)) %>%
+  ungroup %>%
+  #REVIEW: later, move quartiles to make_data?
+  mutate(
+    extr_quartiles = case_when(
+      extr_prctl <= .25 ~ 1,
+      (extr_prctl > .25) & (extr_prctl < .5) ~ 2,
+      (extr_prctl > .5) & (extr_prctl <= .75) ~ 3,
+      (extr_prctl > .75) ~ 4
+    ),
+    extr_quartiles = factor(
+      extr_quartiles,
+      levels = 1:4,
+      labels = c(
+        "strongly\nintroverted\n(1st quartile)",
+        "moderately\nintroverted\n(2nd quartile)",
+        "moderately\nextraverted\n(3rd quartile)",
+        "strongly\nextraverted\n(4th quartile)"
+      )
+    )
+  ) %>%
+  left_join(select(tbl_participants_1, id, starts_with("education")))
+
+```
+
+```{r exp1_AUC}
+dat_exp1_AUC <- tbl_targeting_1 %>%
+  group_by(id) %>%
+  nest %>%
+  mutate(
+    AUC_CI = map(
+      data,
+      roc_auc,
+      truth = stimuli_is_targeted_fct,
+      y = conf_full_range,
+      options = list(smooth = FALSE)
+    )
+  ) %>%
+  unnest(AUC_CI)
+tbl_targeting_performance_1 <- tbl_targeting_performance_1 %>%
+  left_join(select(dat_exp1_AUC, id, AUC = .estimate), by = "id")
+
+```
+
+
+## Multi-level logistic regression model
+
+```{r mdl_exp1, message=TRUE}
+# model was preregistered here: http://aspredicted.org/blind.php?x=wu6sk7 (section 5)
+mdl_exp1 <- brm(
+  dec_correct ~ 1 + condition + (1 | id) + (1 + condition | stimuli),
+  data = tbl_targeting_1,
+  family = bernoulli(),
+  save_pars = save_pars(group = FALSE),
+  file = here("output/study1/models/mdl_exp1"),
+  save_model = here("output/study1/models/mdl_exp1.stan"),
+  chains = 4,
+  iter = iter,
+  warmup = warmup,
+  thin = thin,
+  control = list(adapt_delta = .99),
+  seed = 1999
+)
+mdl_exp1
+
+# Check coding
+pull(mdl_exp1$data, condition) %>% levels
+fnc_check_coding(pull(mdl_exp1$data, condition))
+
+# Check that the data used in the model is the same as the loaded data
+# (in case the model was not rerun because the model file already exists).
+expect_equivalent(as_tibble(mdl_exp1$data),
+                 select(tbl_targeting_1,  all.vars(as.formula(mdl_exp1$formula))))
+
+```
+
+```{r mdl_exp1_txt}
+# export model summary as .txt
+summary(mdl_exp1, robust = TRUE) %>%
+  utils::capture.output(file = here("output/study1/models/mdl_exp1_summary.txt"))
+
+```
+
+
+
+
+
+
+## Difference in percentage points between conditions
+
+```{r mdl_exp1_percentage_points}
+mdl_exp1_percentage_points <-
+  posterior_samples(mdl_exp1, pars = c("^b_.")) %>%
+  as_tibble %>%
+  mutate(
+    prob_control = inv_logit_scaled(b_Intercept - .5 * b_condition1),
+    prob_boosting = inv_logit_scaled(b_Intercept + .5 * b_condition1),
+    prob_diff = prob_boosting - prob_control
+  ) %>%
+  pivot_longer(everything()) %>%
+  group_by(name) %>%
+  summarise(median_qi(value)) %>%
+  filter(str_detect(name, "^prob_")) %>% 
+  kable(digits = 2)
+mdl_exp1_percentage_points
+
+write_lines(
+  mdl_exp1_percentage_points,
+  here("output/study1/models/mdl_exp1_percentage_points.md")
+)
+
+```
+
+
+
+## Effect size
+
+```{r mdl_exp1_effect_sizes}
+mdl_exp1_effect_sizes <- posterior_samples(mdl_exp1,
+                                           pars = c("b_condition1",
+                                                    "sd_id__Intercept")) %>%
+  as_tibble %>%
+  rename(lo_delta = b_condition1, lo_sd = sd_id__Intercept) %>%
+  transmute(CL = pnorm(lo_delta / sqrt(lo_sd ^ 2 + lo_sd ^ 2))) %>%
+  pivot_longer(everything()) %>%
+  group_by(name) %>%
+  summarise(median_qi(value)) %>%
+  kable(digits = 2)
+mdl_exp1_effect_sizes
+
+write_lines(mdl_exp1_effect_sizes,
+            here("output/study1/models/mdl_exp1_effect_sizes.md"))
+
+```
+
+
+
+
+## Figure 2 (main figure for Experiment 1)
+
+```{r fig_exp1_main}
+mdl_exp1_ce_condition <-
+  conditional_effects(mdl_exp1, re_formula = NA)$condition %>%
+  left_join(df_exp1_conditions)
+
+fig_exp1_main <- mdl_exp1_ce_condition %>%
+  rename(boosting_str = condition_str) %>%
+  ggplot(aes(
+    x = fct_rev(boosting_str),
+    y = estimate__,
+    ymin = lower__,
+    ymax = upper__
+  )) +
+  scale_y_continuous(breaks = pretty_breaks(10)) +
+  coord_fixed(ratio = 2, ylim = c(0, 1.025)) +
+  geom_pointrange(position = position_nudge(x = .15)) +
+  labs(x = "",
+       y = acc_str) +
+  theme_minimal_hgrid() +
+  guides(color = "none")
+
+dat_exp1_props <-
+  left_join(tbl_targeting_performance_1, df_exp1_conditions) %>%
+  rename(boosting_str = condition_str) %>%
+  group_by(boosting_str, acc) %>%
+  summarize(n = n()) %>%
+  group_by(boosting_str) %>%
+  mutate(prop = n / sum(n),
+         prop_rounded = fnc_perc(prop)) %>%
+  ungroup
+
+fig_exp1_main <- fig_exp1_main +
+  geom_point(
+    aes(
+      x = fct_rev(boosting_str),
+      y = acc,
+      size = 100 * prop
+    ),
+    alpha = .15,
+    shape = 20,
+    position = position_nudge(x = -.15),
+    inherit.aes = FALSE,
+    data = dat_exp1_props
+  ) +
+  geom_text(
+    aes(
+      x = fct_rev(boosting_str),
+      y = acc,
+      label = prop_rounded
+    ),
+    alpha = .5,
+    size = 2.25,
+    position = position_nudge(x = -.15),
+    inherit.aes = FALSE,
+    data = dat_exp1_props
+  ) +
+  geom_boxplot(
+    aes(condition_str, y = acc),
+    width = .05,
+    outlier.alpha = 0,
+    inherit.aes = FALSE,
+    data = left_join(tbl_targeting_performance_1, df_exp1_conditions)
+  ) +
+  scale_size_area("%", max_size = 10) +
+  guides(size = "none") +
+  theme(legend.position = "right",
+        legend.text = element_text(size = 10))
+fig_exp1_main
+#TODO: ensure that numbers round up to 100; use the function from the survey repo
+
+save_plot(
+  here("output/study1/figures/fig_exp1_main.pdf"),
+  fig_exp1_main,
+  base_width = 3.5,
+  base_height = 3.5
+)
+
+```
+
+
+
+## SI figures
+
+### Accuracy (ECDF)
+
+```{r fig_exp1_ecdf}
+fig_exp1_ecdf <- tbl_targeting_performance_1 %>%
+  left_join(df_exp1_conditions) %>%
+  rename(boosting_str = condition_str) %>% 
+  ggplot(aes(x = acc, color = fct_rev(boosting_str))) +
+  coord_fixed() +
+  scale_color_brewer("Condition", type = "qual", palette = 2) +
+  geom_vline(xintercept = .5, linetype = "dotted") +
+  stat_ecdf(size = 1) +
+  theme(legend.position = c(0.075, 0.875)) +
+  labs(x = acc_str,
+       y = "ECDF") +
+  guides(color = guide_legend("", reverse = TRUE))
+
+```
+
+
+
+### Moderation by extraversion
+
+#### Accuracy vs. continous extraversion percentile
+
+```{r fig_exp1_extr_prctl}
+fig_exp1_extr_prctl <- tbl_targeting_performance_1 %>%
+  left_join(df_exp1_conditions) %>%
+  rename(boosting_str = condition_str) %>% 
+  ggplot(aes(
+    x = extr_prctl,
+    y = acc,
+    color = fct_rev(boosting_str),
+    fill = fct_rev(boosting_str)
+  )) +
+  coord_fixed(ratio = 1, ylim = c(0, 1)) +
+  scale_x_continuous("Extraversion percentile", breaks = pretty_breaks(10)) +
+  scale_y_continuous(acc_str, breaks = pretty_breaks(10)) +
+  scale_color_brewer("", type = "qual", palette = 2) +
+  scale_fill_brewer("", type = "qual", palette = 2) +
+  geom_vline(xintercept = 0.5, linetype = "dotted") +
+  geom_hline(yintercept = 0.5, linetype = "dotted") +
+  stat_smooth(
+    method = "loess",
+    method.args = list(family = "symmetric"),
+    alpha = .15
+  ) +
+  # `family = "symmetric"`: re-descending M estimator is used with Tukey's biweight function
+  geom_point(alpha = .5, position = position_jitter(height = .01)) +
+  theme(
+    legend.position = c(.025, .3),
+    axis.text = element_text(size = 9)) +
+  guides(color = guide_legend(reverse = TRUE),
+         fill = guide_legend(reverse = TRUE))
+
+```
+
+
+#### Accuracy vs. personality percentile quartiles
+
+```{r fig_exp1_extr_quartiles}
+dat_exp1_props_extr_quartiles <- tbl_targeting_performance_1 %>%
+  left_join(df_exp1_conditions) %>%
+  rename(boosting_str = condition_str) %>%
+  group_by(boosting_str, extr_quartiles, acc) %>%
+  summarize(n = n()) %>%
+  group_by(boosting_str, extr_quartiles) %>%
+  mutate(prop = n / sum(n),
+         prop_rounded = round(100 * prop, 0)) %>%
+  ungroup
+#COMEBAK `fnc_perc` throws an error
+
+
+fig_exp1_extr_quartiles_base <- dat_exp1_props_extr_quartiles %>%
+  ggplot(
+    aes(
+      x = extr_quartiles,
+      y = acc,
+      color = fct_rev(boosting_str),
+      group = fct_rev(str_c(boosting_str, extr_quartiles)),
+      size = prop,
+      label = prop_rounded
+    )
+  ) +
+  coord_fixed(ratio = 2.5, ylim = c(0, 1.025)) +
+  theme_minimal_hgrid() +
+  labs(x = "") +
+  scale_y_continuous(acc_str, breaks = pretty_breaks(10)) +
+  scale_color_brewer("", type = "qual", palette = 2) +
+  scale_size_area("%", max_size = 9) +
+  geom_point(position = position_dodge(width = 1)) +
+  geom_text(color = "white",
+            size = 2.5,
+            position = position_dodge(width = 1)) +
+  guides(color = guide_legend(reverse = FALSE),
+         size = "none") +
+  theme(
+    legend.position = "top",
+    legend.justification = "center",
+    axis.text.x = element_text(size = 9)
+  )
+
+fig_exp1_extr_quartiles <- fig_exp1_extr_quartiles_base +
+  geom_boxplot(
+    aes(size = NULL,
+        label = NULL),
+    width = .15,
+    position = position_dodge(width = .2),
+    outlier.alpha = 0,
+    data = {
+      left_join(tbl_targeting_performance_1, df_exp1_conditions) %>%
+        rename(boosting_str = condition_str)
+    }
+  )
+
+```
+
+
+
+#### SI extraversion figure
+
+```{r fig_exp1_SI_extr, fig.width=9, fig.height=4.5}
+fig_exp1_SI_extr <- plot_grid(
+  fig_exp1_extr_prctl,
+  fig_exp1_extr_quartiles,
+  nrow = 1,
+  axis = "lrtb",
+  align = "hv",
+  rel_widths = c(.75, 1),
+  scale = c(.9, .95),
+  hjust = -2,
+  vjust = +2.5,
+  labels = c("A", "B")
+)
+fig_exp1_SI_extr
+
+save_plot(
+  here("output/study1/figures/fig_exp1_SI_extr.pdf"),
+  fig_exp1_SI_extr,
+  base_width = 9,
+  base_height = 4.5
+)
+
+```
+
+
+
+### Incorporating confidence judgments (AUC analysis)
+
+#### Confidence-AUC vs. continous extraversion percentile
+
+```{r fig_exp1_auc_extr_prctl}
+fig_exp1_auc_extr_prctl <- fig_exp1_extr_prctl +
+  aes(y = AUC) +
+  scale_y_continuous("AUC")
+
+```
+
+
+#### Confidence-AUC vs. personality percentile quartiles
+
+```{r fig_exp1_auc_extr_quartiles}
+fig_exp1_auc_extr_quartiles <- tbl_targeting_performance_1 %>%
+  left_join(df_exp1_conditions) %>%
+  rename(boosting_str = condition_str) %>% 
+  ggplot(aes(extr_quartiles, AUC, color = fct_rev(boosting_str))) +
+  scale_y_continuous(breaks = pretty_breaks(10)) +
+  scale_color_brewer("", type = "qual", palette = 2) +
+  labs(x = "") +
+  geom_boxplot(width = .2, outlier.alpha = 0) +
+  geom_point(alpha = .2, position = position_jitterdodge(jitter.width = .15)) +
+  theme(legend.position = "top",
+        legend.justification = "center")
+
+```
+
+
+#### SI confidence-AUC figure
+
+```{r fig_exp1_SI_AUC, fig.width=9, fig.height=4.5}
+fig_exp1_SI_AUC <- plot_grid(
+  fig_exp1_auc_extr_prctl,
+  fig_exp1_auc_extr_quartiles,
+  nrow = 1,
+  axis = "lrtb",
+  align = "hv",
+  rel_widths = c(.75, 1),
+  scale = c(.9, .95),
+  hjust = -2,
+  vjust = +2.5,
+  labels = c("A", "B")
+)
+fig_exp1_SI_AUC
+
+save_plot(
+  here("output/study1/figures/fig_exp1_SI_AUC.pdf"),
+  fig_exp1_SI_AUC,
+  base_width = 9,
+  base_height = 4.5
+)
+
+```
+
+
+
+### Moderation by education
+
+#### Accuracy vs. education
+
+```{r fig_exp1_education_acc}
+dat_exp1_education_n <- tbl_targeting_performance_1 %>%
+  filter(!is.na(education_coarse)) %>%
+  left_join(df_exp1_conditions) %>%
+  rename(boosting_str = condition_str) %>%
+  group_by(boosting_str, education_coarse) %>%
+  summarize(n = n()) %>%
+  mutate(n_str = glue("n = {n}"))
+
+dat_exp1_props_education <- tbl_targeting_performance_1 %>%
+  filter(!is.na(education_coarse)) %>%
+  left_join(df_exp1_conditions) %>%
+  rename(boosting_str = condition_str) %>%
+  group_by(boosting_str, education_coarse, acc) %>%
+  summarize(n = n()) %>%
+  group_by(boosting_str, education_coarse) %>%
+  mutate(prop = n / sum(n),
+         prop_rounded = round(100 * prop, 0)) %>%
+  ungroup
+#COMEBAK `fnc_perc` throws an error
+
+fig_exp1_education_acc <- fig_exp1_extr_quartiles_base %+%
+  dat_exp1_props_education +
+  aes(x = education_coarse,
+      group = fct_rev(str_c(education_coarse, boosting_str))) +
+  coord_fixed(ratio = 3, ylim = c(-0.0125, 1.025)) +
+  geom_boxplot(
+    aes(size = NULL,
+        label = NULL),
+    width = .15,
+    position = position_dodge(width = .25),
+    outlier.alpha = 0,
+    data = {
+      left_join(tbl_targeting_performance_1, df_exp1_conditions) %>%
+        rename(boosting_str = condition_str) %>%
+        filter(!is.na(education_coarse))
+    }
+  ) +
+  geom_text(
+    aes(
+      x = education_coarse,
+      y = -.035,
+      group = fct_rev(str_c(education_coarse, boosting_str)),
+      label = n_str
+    ),
+    size = 3,
+    position = position_dodge(width = 1),
+    data = dat_exp1_education_n,
+    inherit.aes = FALSE,
+  ) +
+  scale_x_discrete(
+    "Education level",
+    labels = function(x)
+      str_wrap(x, width = 10)
+  ) +
+  theme(axis.text.x = element_text(size = 9))
+
+```
+
+
+#### Confidence-AUC vs. education
+
+```{r fig_exp1_education_auc}
+fig_exp1_education_auc <- fig_exp1_auc_extr_quartiles %+%
+  {fig_exp1_auc_extr_quartiles$data %>% 
+      left_join(dat_exp1_education_n) %>%
+      filter(!is.na(education_coarse))} +
+  aes(x = education_coarse) +
+  coord_fixed(ratio = 3.125, ylim = c(0, 1.025)) +
+  scale_x_discrete("Education level", labels = function(x) str_wrap(x, width = 10)) +
+  theme(axis.text.x = element_text(size = 9))
+
+```
+
+
+#### SI education figure
+
+```{r fig_exp1_education, fig.width=10, fig.height=4.75}
+fig_exp1_education <- plot_grid(
+  fig_exp1_education_acc,
+  fig_exp1_education_auc,
+  nrow = 1,
+  scale = .95,
+  axis = "tblr",
+  align = "hv",
+  hjust = -2,
+  vjust = +2.5,
+  labels = c("A", "B")
+)
+fig_exp1_education
+
+save_plot(
+  here("output/study1/figures/fig_exp1_SI_education.pdf"),
+  fig_exp1_education,
+  base_width = 10,
+  base_height = 4.75
+)
+
+```
+
+
+# Experiment 2
+
+## Load data
+
+```{r load_data_experiment2}
+tbl_participants_2 <- read_rds(here("output/study2/tbl_participants.rds"))
+tbl_targeting_2 <- read_rds(here("output/study2/tbl_targeting.rds"))
+
+```
+
+
+## Augment data
+
+```{r tbl_targeting_performance_2}
+tbl_targeting_performance_2 <- tbl_targeting_2 %>%
+  group_by_at(
+    vars(
+      id,
+      questionnaire,
+      relevance,
+      contains("extr"),
+      contains("ATI")
+    )
+  ) %>%
+  summarize(acc = mean(dec_correct),
+            conf_in_correct = mean(conf_in_correct)) %>%
+  ungroup %>% 
+  #REVIEW: later, move quartiles to make_data?
+  mutate(
+    extr_quartiles = case_when(
+      extr_prctl <= .25 ~ 1,
+      (extr_prctl > .25) & (extr_prctl < .5) ~ 2,
+      (extr_prctl > .5) & (extr_prctl <= .75) ~ 3,
+      (extr_prctl > .75) ~ 4
+    ),
+    extr_quartiles = factor(
+      extr_quartiles,
+      levels = 1:4,
+      labels = c(
+        "strongly\nintroverted\n(1st quartile)",
+        "moderately\nintroverted\n(2nd quartile)",
+        "moderately\nextraverted\n(3rd quartile)",
+        "strongly\nextraverted\n(4th quartile)"
+      )
+    )
+  ) %>% 
+  left_join(select(tbl_participants_2, id, starts_with("education")))
+
+```
+
+```{r exp2_AUC}
+dat_exp2_AUC <- tbl_targeting_2 %>%
+  group_by(id) %>%
+  nest %>%
+  mutate(
+    AUC_CI = map(
+      data,
+      roc_auc,
+      truth = stimuli_is_targeted_fct,
+      y = conf_full_range,
+      options = list(smooth = FALSE)
+    )
+  ) %>%
+  unnest(AUC_CI)
+tbl_targeting_performance_2 <- tbl_targeting_performance_2 %>%
+  left_join(select(dat_exp2_AUC, id, AUC = .estimate), by = "id")
+
+```
+
+
+
+
+## Multi-level logistic regression model
+
+```{r mdl_exp2, message=TRUE}
+# model was preregistered here: http://aspredicted.org/blind.php?x=39ik6v (section 5)
+mdl_exp2 <- update(
+  mdl_exp1,
+  formula. = dec_correct ~ 1 + relevance * questionnaire + (1 | id) + (1 + relevance * questionnaire | stimuli),
+  newdata = tbl_targeting_2,
+  file = here("output/study2/models/mdl_exp2"),
+  save_model = here("output/study2/models/mdl_exp2.stan")
+  )
+# define the model based on how it differs from `mdl_exp1`
+mdl_exp2
+
+# Check coding
+pull(mdl_exp2$data, relevance) %>% levels
+fnc_check_coding(pull(mdl_exp2$data, relevance))
+
+pull(mdl_exp2$data, questionnaire) %>% levels
+fnc_check_coding(pull(mdl_exp2$data, questionnaire))
+
+# Check that the data used in the model is the same as the loaded data
+# (in case the model was not rerun because the model file already exists).
+expect_equivalent(as_tibble(mdl_exp2$data),
+                 select(tbl_targeting_2,  all.vars(as.formula(mdl_exp2$formula))))
+
+```
+
+
+```{r mdl_exp2_text}
+# export model summary as .txt
+options(width = 120)
+summary(mdl_exp2, robust = TRUE) %>%
+  utils::capture.output(file = here("output/study2/models/mdl_exp2_summary.txt"))
+
+```
+
+
+
+
+
+## Difference in percentage points between conditions
+
+```{r mdl_exp2_percentage_points}
+mdl_exp2_percentage_points <-
+  posterior_samples(mdl_exp2, pars = c("^b_.")) %>%
+  as_tibble %>%
+  mutate(
+    prob_boosting_quest = inv_logit_scaled(
+      b_Intercept + .5 * b_relevance1 + .5 * b_questionnaire1 + .25 * `b_relevance1:questionnaire1`
+    ),
+    prob_boosting_no_quest = inv_logit_scaled(
+      b_Intercept + .5 * b_relevance1 - .5 * b_questionnaire1 - .25 * `b_relevance1:questionnaire1`
+    ),
+    prob_control_quest = inv_logit_scaled(
+      b_Intercept - .5 * b_relevance1 + .5 * b_questionnaire1 - .25 * `b_relevance1:questionnaire1`
+    ),
+    prob_control_no_quest = inv_logit_scaled(
+      b_Intercept - .5 * b_relevance1 - .5 * b_questionnaire1 + .25 * `b_relevance1:questionnaire1`
+    ),
+    prob_diff_boosting_quest = prob_boosting_quest - prob_boosting_no_quest,
+    prob_diff_boosting_control_no_quest = prob_boosting_no_quest - prob_control_no_quest,
+    prob_diff_boosting_control_quest = prob_boosting_quest - prob_control_quest
+  ) %>%
+  pivot_longer(everything()) %>%
+  group_by(name) %>%
+  summarise(median_qi(value)) %>%
+  filter(str_detect(name, "^prob_")) %>% 
+  kable(digits = 2)
+mdl_exp2_percentage_points
+
+write_lines(
+  mdl_exp2_percentage_points,
+  here("output/study2/models/mdl_exp2_percentage_points.md")
+)
+
+```
+
+
+
+## Effect size
+
+```{r mdl_exp2_effect_sizes}
+mdl_exp2_effect_sizes <-
+  posterior_samples(mdl_exp2, pars = c("^b_.", "^sd_id")) %>%
+  as_tibble %>%
+  transmute(
+    CL_diff_boosting_quest_no_quest = pnorm(((
+      b_Intercept + .5 * b_relevance1 + .5 * b_questionnaire1 + .25 * `b_relevance1:questionnaire1`
+    ) -
+      (
+        b_Intercept + .5 * b_relevance1 - .5 * b_questionnaire1 - .25 * `b_relevance1:questionnaire1`
+      )
+    ) /
+      sqrt(sd_id__Intercept ^ 2 + sd_id__Intercept ^ 2)),
+    
+    CL_diff_boosting_control_no_quest = pnorm(((
+      b_Intercept + .5 * b_relevance1 - .5 * b_questionnaire1 - .25 * `b_relevance1:questionnaire1`
+    ) -
+      (
+        b_Intercept - .5 * b_relevance1 - .5 * b_questionnaire1 + .25 * `b_relevance1:questionnaire1`
+      )
+    ) /
+      sqrt(sd_id__Intercept ^ 2 + sd_id__Intercept ^ 2))
+    
+    ,
+    CL_diff_boosting_control_quest = pnorm(((
+      b_Intercept + .5 * b_relevance1 + .5 * b_questionnaire1 + .25 * `b_relevance1:questionnaire1`
+    ) -
+      (
+        b_Intercept - .5 * b_relevance1 + .5 * b_questionnaire1 - .25 * `b_relevance1:questionnaire1`
+      )
+    ) /
+      sqrt(sd_id__Intercept ^ 2 + sd_id__Intercept ^ 2))
+    
+  ) %>%
+  pivot_longer(everything()) %>%
+  group_by(name) %>%
+  summarise(median_qi(value)) %>%
+  kable(digits = 2)
+mdl_exp2_effect_sizes
+
+write_lines(mdl_exp2_effect_sizes,
+            here("output/study2/models/mdl_exp2_effect_sizes.md"))
+
+```
+
+
+
+## Figure 3 (main figure for Experiment 2)
+
+```{r fig_exp2_main}
+mdl_exp2_ce <-
+  conditional_effects(mdl_exp2,
+                      effects = "relevance:questionnaire",
+                      re_formula = NA)$"relevance:questionnaire" %>%
+  left_join(df_exp2_conditions, by = c("relevance", "questionnaire"))
+
+fig_exp2_main <- mdl_exp2_ce %>%
+  ggplot(
+    aes(
+      x = boosting_str,
+      color = questionnaire_str,
+      y = estimate__,
+      ymin = lower__,
+      ymax = upper__
+    )
+  ) +
+  coord_fixed(ratio = 1.25, ylim = c(0, 1.025)) +
+  scale_y_continuous(breaks = pretty_breaks(10)) +
+  scale_color_brewer("Questionnaire", type = "qual", palette = 2) +
+  geom_pointrange(position = position_dodge(.25)) +
+  labs(x = "",
+       y = acc_str) +
+  theme_minimal_hgrid() +
+  theme(legend.position = c(0.15, 1 - 0.925))
+
+dat_exp2_props <-
+  left_join(tbl_targeting_performance_2, df_exp2_conditions) %>%
+  group_by(questionnaire_str, boosting_str, acc) %>%
+  summarize(n = n()) %>%
+  group_by(questionnaire_str, boosting_str) %>%
+  mutate(prop = n / sum(n),
+         prop_rounded = fnc_perc(prop)) %>%
+  ungroup
+
+fig_exp2_main <- fig_exp2_main +
+  geom_point(
+    aes(
+      x = boosting_str,
+      color = questionnaire_str,
+      y = acc,
+      size = 100 * prop
+    ),
+    alpha = .15,
+    shape = 20,
+    inherit.aes = FALSE,
+    position = position_dodge(1.25),
+    data = dat_exp2_props
+  ) +
+  geom_text(
+    aes(
+      x = boosting_str,
+      color = questionnaire_str,
+      y = acc,
+      label = prop_rounded
+    ),
+    alpha = .5,
+    size = 2.25,
+    position = position_dodge(1.25),
+    inherit.aes = FALSE,
+    data = dat_exp2_props
+  ) +
+  geom_boxplot(
+    aes(boosting_str, y = acc, color = questionnaire_str),
+    width = .075,
+    position = position_dodge(.75),
+    outlier.alpha = 0,
+    inherit.aes = FALSE,
+    data = left_join(tbl_targeting_performance_2, df_exp2_conditions)
+  ) +
+  scale_size_area(max_size = 10) +
+  guides(size = "none") +
+  theme(
+    legend.position = "top",
+    legend.justification = "center") +
+  guides(color = guide_legend(
+    title.position = "left",
+    title.hjust = .5,
+    reverse = FALSE,
+    direction = "horizontal"
+  ))
+#TODO: ensure that numbers round up to 100; use the function from the survey repo
+
+fig_exp2_main
+
+save_plot(
+  here("output/study2/figures/fig_exp2_main.pdf"),
+  fig_exp2_main,
+  base_width = 5,
+  base_height = 3.5
+)
+
+```
+
+
+
+## SI figures
+
+### Accuracy (ECDF)
+
+```{r fig_exp2_ecdf}
+fig_exp2_ecdf <- tbl_targeting_performance_2 %>%
+  left_join(df_exp2_conditions) %>% 
+  ggplot(aes(x = acc, color = boosting_str, linetype = fct_rev(questionnaire_str))) +
+  coord_fixed() +
+  scale_color_brewer("", type = "qual", palette = 2) +
+  scale_linetype("") +
+  geom_vline(xintercept = .5, linetype = "dotted") +
+  stat_ecdf(size = 1) +
+  theme(legend.position = "top") +
+  labs(x = acc_str,
+       y = "ECDF")
+
+```
+
+
+### Moderation by extraversion
+
+#### Accuracy vs. continous extraversion percentile
+
+```{r fig_exp2_extr_prctl}
+fig_exp2_extr_prctl <- fig_exp1_extr_prctl %+% {
+  left_join(tbl_targeting_performance_2, df_exp2_conditions) %>%
+    mutate(questionnaire_str = str_c(questionnaire_str, " questionnaire"))
+} +
+  aes(color = boosting_str, fill = boosting_str) +
+  facet_wrap( ~ fct_rev(questionnaire_str)) +
+  theme(legend.position = c(.025, .25))
+
+```
+
+
+
+#### Accuracy vs. personality percentile quartiles
+
+```{r fig_exp2_extr_quartiles}
+dat_exp2_props_extr_quartiles <- tbl_targeting_performance_2 %>%
+  left_join(df_exp2_conditions) %>%
+  group_by(boosting_str, questionnaire_str, extr_quartiles, acc) %>%
+  summarize(n = n()) %>%
+  group_by(boosting_str, questionnaire_str, extr_quartiles) %>%
+  mutate(prop = n / sum(n),
+         prop_rounded = round(100 * prop, 0)) %>%
+  ungroup
+#COMEBAK `fnc_perc` throws an error
+
+fig_exp2_extr_quartiles_base <- fig_exp1_extr_quartiles_base %+%
+  left_join(dat_exp2_props_extr_quartiles, df_exp2_conditions) +
+  facet_wrap( ~ questionnaire_str,
+              labeller = labeller(
+                questionnaire_str = function(x)
+                  glue("{x} questionnaire")
+              )) +
+  guides(color = guide_legend(reverse = TRUE)) +
+  scale_color_brewer("",
+                     type = "qual",
+                     palette = 2,
+                     direction = -1)
+
+fig_exp2_extr_quartiles <- fig_exp2_extr_quartiles_base +
+  geom_boxplot(
+    aes(size = NULL,
+        label = NULL),
+    width = .15,
+    position = position_dodge(width = .2),
+    outlier.alpha = 0,
+    data = left_join(tbl_targeting_performance_2, df_exp2_conditions)
+  )
+fig_exp2_extr_quartiles
+
+```
+
+
+
+
+
+#### SI extraversion figure
+
+```{r fig_exp2_SI_extr, fig.width=9, fig.height=8.25}
+fig_exp2_SI_extr <- plot_grid(
+  fig_exp2_extr_prctl,
+  fig_exp2_extr_quartiles,
+  ncol = 1,
+  axis = "lrtb",
+  align = "hv",
+  rel_heights = c(.75, 1),
+  scale = c(1.2, .9),
+  hjust = -2,
+  vjust = +2.5,
+  labels = c("A", "B")
+)
+fig_exp2_SI_extr
+
+save_plot(
+  here("output/study2/figures/fig_exp2_SI_extr.pdf"),
+  fig_exp2_SI_extr,
+  base_width = 9,
+  base_height = 8.25
+)
+
+```
+
+
+
+### Incorporating confidence judgments (AUC analysis)
+
+#### Confidence-AUC vs. continous extraversion percentile
+
+```{r fig_exp2_auc_extr_prctl}
+fig_exp2_auc_extr_prctl <- fig_exp2_extr_prctl +
+  aes(y = AUC) +
+  scale_y_continuous("AUC")
+fig_exp2_auc_extr_prctl
+
+```
+
+
+#### Confidence-AUC vs. personality percentile quartiles
+
+```{r fig_exp2_auc_extr_quartiles}
+fig_exp2_auc_extr_quartiles <- tbl_targeting_performance_2 %>%
+  left_join(df_exp2_conditions) %>%
+  ggplot(aes(extr_quartiles, AUC, color = boosting_str)) +
+  scale_y_continuous(breaks = pretty_breaks(10)) +
+  scale_color_brewer("", type = "qual", palette = 2) +
+  labs(x = "") +
+  geom_boxplot(width = .2, outlier.alpha = 0) +
+  geom_point(alpha = .2, position = position_jitterdodge(jitter.width = .15)) +
+  facet_wrap( ~ questionnaire_str,
+              labeller = labeller(
+                questionnaire_str = function(x)
+                  glue("{x} questionnaire")
+              )) +
+  theme(
+    legend.position = "top",
+    legend.justification = "center",
+    axis.text.x = element_text(size = 8)
+  )
+fig_exp2_auc_extr_quartiles
+
+```
+
+
+#### SI confidence-AUC figure
+
+```{r fig_exp2_SI_AUC, fig.width=9, fig.height=8.25}
+fig_exp2_SI_AUC <- plot_grid(
+  fig_exp2_auc_extr_prctl,
+  fig_exp2_auc_extr_quartiles,
+  ncol = 1,
+  axis = "lrtb",
+  align = "hv",
+  rel_heights = c(.75, 1),
+  scale = c(1.2, .9),
+  hjust = -2,
+  vjust = +2.5,
+  labels = c("A", "B")
+)
+fig_exp2_SI_AUC
+
+save_plot(
+  here("output/study2/figures/fig_exp2_SI_AUC.pdf"),
+  fig_exp2_SI_AUC,
+  base_width = 9,
+  base_height = 8.25
+)
+
+```
+
+
+### Moderation by education
+
+#### Accuracy vs. education
+
+```{r fig_exp2_education_acc}
+dat_exp2_education_n <- tbl_targeting_performance_2 %>%
+  filter(!is.na(education_coarse)) %>%
+  left_join(df_exp2_conditions) %>%
+  group_by(boosting_str, questionnaire_str, education_coarse) %>%
+  summarize(n = n()) %>%
+  mutate(n_str = glue("n = {n}"))
+
+dat_exp2_props_education <- tbl_targeting_performance_2 %>%
+  filter(!is.na(education_coarse)) %>%
+  left_join(df_exp2_conditions) %>%
+  left_join(dat_exp2_education_n) %>%
+  group_by(boosting_str, questionnaire_str, education_coarse, acc) %>%
+  summarize(n = n()) %>%
+  group_by(boosting_str, education_coarse) %>%
+  mutate(prop = n / sum(n),
+         prop_rounded = round(100 * prop, 0)) %>%
+  ungroup
+#COMEBAK `fnc_perc` throws an error
+
+fig_exp2_education_acc <- fig_exp2_extr_quartiles_base %+%
+  dat_exp2_props_education +
+  aes(x = education_coarse,
+      group = fct_rev(str_c(education_coarse, boosting_str))) +
+  coord_fixed(ratio = 3, ylim = c(-0.0125, 1.025)) +
+  guides(color = guide_legend(reverse = TRUE)) +
+  geom_boxplot(
+    aes(size = NULL,
+        label = NULL),
+    width = .15,
+    position = position_dodge(width = .25),
+    outlier.alpha = 0,
+    data = {
+      left_join(tbl_targeting_performance_2, df_exp2_conditions) %>%
+        left_join(dat_exp2_education_n) %>%
+        filter(!is.na(education_coarse))
+    }
+  ) +
+  geom_text(
+    aes(
+      x = education_coarse,
+      y = -.035,
+      group = fct_rev(str_c(education_coarse, boosting_str)),
+      label = n_str
+    ),
+    size = 2.5,
+    position = position_dodge(width = 1),
+    data =
+      dat_exp2_education_n
+    ,
+    inherit.aes = FALSE,
+  ) +
+  scale_x_discrete(
+    "Education level",
+    labels = function(x)
+      str_wrap(x, width = 10)
+  ) +
+  facet_wrap( ~ questionnaire_str,
+              labeller = labeller(
+                questionnaire_str = function(x)
+                  glue("{x} questionnaire")
+              )) +
+  theme(axis.text.x = element_text(size = 9))
+fig_exp2_education_acc
+
+```
+
+
+#### Confidence-AUC vs. education
+
+```{r fig_exp2_education_auc}
+fig_exp2_education_auc <- fig_exp2_auc_extr_quartiles %+%
+  {
+    fig_exp2_auc_extr_quartiles$data %>%
+      left_join(dat_exp2_education_n) %>%
+      filter(!is.na(education_coarse))
+  } +
+  aes(x = education_coarse) +
+  coord_fixed(ratio = 3, ylim = c(-0.0125, 1.025)) +
+  geom_text(
+    aes(
+      x = education_coarse,
+      y = -.035,
+      group = fct_rev(str_c(education_coarse, boosting_str)),
+      label = n_str
+    ),
+    size = 2.5,
+    position = position_dodge(width = 1),
+    data = dat_exp2_education_n,
+    inherit.aes = FALSE,
+  ) +
+  facet_wrap(~ questionnaire_str,
+             labeller = labeller(
+               questionnaire_str = function(x)
+                 glue("{x} questionnaire")
+             )) +
+  scale_x_discrete(
+    "Education level",
+    labels = function(x)
+      str_wrap(x, width = 10)
+  ) +
+  theme(
+    axis.text.x = element_text(size = 9),
+    strip.text = element_text(face = "plain"))
+fig_exp2_education_auc
+
+```
+
+
+
+#### SI education figure
+
+```{r fig_exp2_education, fig.width=9, fig.height=9}
+fig_exp2_education <- plot_grid(
+  fig_exp2_education_acc,
+  fig_exp2_education_auc,
+  nrow = 2,
+  scale = .95,
+  axis = "tblr",
+  align = "hv",
+  hjust = -2,
+  vjust = +2.5,
+  labels = c("A", "B")
+)
+fig_exp2_education
+
+save_plot(
+  here("output/study2/figures/fig_exp2_SI_education.pdf"),
+  fig_exp2_education,
+  base_width = 9,
+  base_height = 10
+)
+
+```
+

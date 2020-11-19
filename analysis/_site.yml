@@ -1,0 +1,26 @@
+name: inoculation
+output_dir: ../public
+navbar:
+  title: inoculation
+  left:
+  - text: Home
+    href: index.html
+  - text: Prepare data Study 1
+    href: study1_make_data.html
+  - text: Prepare data Study 2
+    href: study2_make_data.html
+  - text: Analyses
+    href: analyses.html
+  right:
+  - icon: fa-gitlab
+    text: Source code
+    href: https://arc-git.mpib-berlin.mpg.de/ai_society/inoculation
+output:
+  workflowr::wflow_html:
+    code_folding: show
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    theme: cosmo
+    highlight: textmate

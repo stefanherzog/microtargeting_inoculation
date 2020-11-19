@@ -1,0 +1,599 @@
+---
+title: "Prepare data Study 2"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Setup
+
+```{r setup, include=FALSE, cache=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE, 
+  message = TRUE,
+  warning = TRUE,
+  cache = FALSE,
+  autodep = TRUE
+  )
+
+```
+
+
+Source `dependencies.R`.
+
+```{r dependencies, message=FALSE, cache=FALSE, code=readr::read_lines(here::here("code/_dependencies.R"))}
+source(here::here("code/_dependencies.R"))
+
+```
+
+
+
+# Load data
+
+```{r load_data}
+extr <- read_rds(here("data/study2/extr.rds")) %>% filter(!is.na(answer))
+ATI <- read_rds(here("data/study2/ATI.rds")) %>% filter(!is.na(answer))
+detection <- read_rds(here("data/study2/detection.rds")) %>% filter(!is.na(answer))
+check <- read_rds(here("data/study2/check.rds"))
+condition <- read_rds(here("data/study2/condition.rds"))
+checkopen <- read_rds(here("data/study2/check_open.rds")) 
+
+```
+
+
+
+# Participant data frame
+
+
+## Age
+
+```{r tbl_age}
+tbl_age <- full_join({
+  extr %>%
+    filter(item_name == "age") %>%
+    select(id, age_extr = answer) %>%
+    assert(within_bounds(18, 99), age_extr) %>% 
+    assert(not_na, everything())
+},
+{
+  ATI %>%
+    filter(item_name == "age") %>%
+    select(id, age_ATI = answer) %>%
+    assert(within_bounds(18, 99), age_ATI) %>% 
+    assert(not_na, everything())
+}, by = "id") %>%
+  type_convert
+
+```
+
+
+
+## Education
+
+```{r tbl_education}
+tbl_education <- checkopen %>%
+  filter(item_name == "eduaction") %>% # typo in data file
+  select(id, education_num = answer) %>%
+  type_convert %>%
+  left_join(df_education_infos, by = "education_num") %>%
+  select(-education_num) %>% 
+  assert(not_na, everything())
+
+```
+
+
+```{r education}
+tbl_education %>% 
+  group_by(education) %>% 
+  summarize(n = n()) %>% 
+  kable()
+
+```
+
+```{r education_coarse}
+tbl_education %>% 
+  group_by(education_coarse) %>% 
+  summarize(n = n()) %>% 
+  kable()
+
+```
+
+
+## Create treatment variables
+
+```{r tbl_boosting_vs_control}
+tbl_treatment <- condition %>%
+  select(id, condition) %>%
+  mutate(condition = factor(
+    condition - 1,
+    c(3, 2, 1, 0),
+    c(
+      "control, definition + test",
+      "control, definition",
+      "boosting, definition + test",
+      "boosting, definition"
+    )
+  )) %>%
+  assert(not_na, everything()) %>%
+  mutate(
+    relevance = case_when(
+      condition == "control, definition" ~ "control",
+      condition == "control, definition + test" ~ "control",
+      condition == "boosting, definition" ~ "boosting",
+      condition == "boosting, definition + test" ~ "boosting"
+    ),
+    relevance = factor(relevance),
+    questionnaire = case_when(
+      condition == "control, definition" ~ "without",
+      condition == "control, definition + test" ~ "with",
+      condition == "boosting, definition" ~ "without",
+      condition == "boosting, definition + test" ~ "with"
+    ),
+    questionnaire = factor(questionnaire)
+  ) %>% 
+  assert(not_na, everything())
+
+# with(tbl_treatment, table(condition, relevance))
+# with(tbl_treatment, table(condition, questionnaire))
+
+# Use deviation coding
+contrasts(tbl_treatment$relevance) <- "contr.dev"
+contrasts(tbl_treatment$questionnaire) <- "contr.dev"
+
+```
+
+
+
+## Personality measures
+
+### Extraversion vs. introversion
+
+```{r tbl_extr}
+tbl_extr <- extr %>%
+  select(id, item_name, answer) %>%
+  filter(str_detect(item_name, "^bfi")) %>%
+  type_convert %>%
+  assert(not_na, everything()) %>%
+  mutate(answer_aligned = ifelse(str_detect(item_name, "R"),
+                                 5 + 1 - answer, answer)) %>%
+  group_by(id) %>%
+  summarize(extr = mean(answer_aligned)) %>%
+  assert(not_na, everything()) %>%
+  inner_join(select(tbl_age, id, age = age_extr), by = "id") %>%
+  assert(not_na, everything()) %>%
+  mutate(extr_norm = map2(extr, age,
+                          fnc_find_extr_prctl)) %>%
+  unnest(extr_norm) %>%
+  select(-age) %>% 
+  assert(not_na, everything())
+tbl_extr
+
+# Use deviation coding
+contrasts(tbl_extr$extr_type) <- "contr.dev"
+
+```
+
+
+### ATI
+
+```{r tbl_ATI}
+# Norms are from
+# 
+# Franke, T., Attig, C., & Wessel, D. (2019). A personal resource for technology interaction: development and validation of the affinity for technology interaction (ATI) scale. International Journal of Human–Computer Interaction, 35(6), 456-467. https://doi.org/10.1080/10447318.2018.1456150
+# 
+# Sample "S5-full", Table 1 (p. 459)
+
+tbl_ATI <- ATI %>%
+  select(id, item_name, answer) %>%
+  filter(str_detect(item_name, "^ATI")) %>%
+  type_convert %>%
+  assert(not_na, everything()) %>%
+  mutate(answer_aligned = ifelse(str_detect(item_name, "R"),
+                                 5 + 1 - answer, answer)) %>%
+  group_by(id) %>%
+  summarize(ATI = mean(answer_aligned)) %>%
+  assert(not_na, everything()) %>%
+  semi_join(tbl_age, by = "id") %>%
+  mutate(
+    ATI_prctl = pnorm(q = ATI, mean = 3.09, sd = 0.86),
+    ATI_type = case_when(ATI_prctl > .5 ~ "affine",
+                         ATI_prctl <= .5 ~ "non-affine",
+                         TRUE ~ "NA"),
+    ATI_pro = abs(ATI_prctl - .5)
+  )
+tbl_ATI
+
+```
+
+
+
+
+## Combine data
+
+```{r tbl_participants}
+tbl_participants <- select(tbl_age, id, age = age_ATI) %>%
+  left_join(tbl_education, by = "id") %>%
+  inner_join(select(tbl_treatment, id, condition, relevance, questionnaire),
+             by = "id") %>%
+  left_join(tbl_extr, by = "id") %>%
+  left_join(tbl_ATI, by = "id")
+tbl_participants
+
+```
+
+
+
+# Targeting task
+
+```{r tbl_targeting}
+tbl_targeting <- detection %>%
+  semi_join(tbl_participants, by = "id") %>%
+  select(id, item_name, answer) %>%
+  filter(str_detect(item_name, "^mc_target|^confidence")) %>%
+  assert(not_na, everything()) %>%
+  mutate(
+    stimuli = str_extract(item_name, "\\d{1,2}"),
+    response = ifelse(str_detect(item_name, "^mc_target"), "dec", "conf")
+  ) %>%
+  pivot_wider(
+    id_cols = c("id", "stimuli"),
+    names_from = "response",
+    values_from = "answer"
+  ) %>%
+  assert(not_na, everything()) %>%
+  type_convert %>%
+  # dec: 1 = "yes
+  mutate(dec = ifelse(dec == 2, 0, 1),
+         dec_fct = factor(dec, c(1, 0))) %>%
+  assert(in_set(1:5), conf) %>%
+  assert(in_set(0:1), dec) %>%
+  assert(not_na, everything()) %>%
+  left_join(tbl_stimuli, by = "stimuli") %>%
+  assert(not_na, everything()) %>%
+  left_join(
+    select(
+      tbl_participants,
+      id,
+      condition,
+      relevance,
+      questionnaire,
+      contains("extr"),
+      contains("ATI")
+    ),
+    by = "id"
+  ) %>%
+  mutate(
+    stimuli_is_targeted = case_when(
+      stimuli_target == extr_type ~ TRUE,
+      stimuli_target != extr_type ~ FALSE,
+      TRUE ~ NA
+    ),
+    stimuli_is_targeted_fct = factor(stimuli_is_targeted * 1, c(1, 0)),
+    dec_correct = (stimuli_is_targeted == dec) * 1,
+    conf_full_range = ifelse(dec == 1, conf, -conf),
+    conf_in_correct = ifelse(dec == 1, conf, 5 + 1 - conf)
+  )
+tbl_targeting
+
+## check:
+# tbl_targeting %>%
+#   select(stimuli_target, extr_type, stimuli_is_targeted) %>%
+#   table
+
+```
+
+
+# Data exclusion criteria
+
+We preregistered the following data exclusion criteria (see <http://aspredicted.org/blind.php?x=39ik6v>):
+
+> 6) Describe exactly how outliers will be defined and handled, and your precise rule(s) for excluding observations.
+> 
+> We will exclude participants that:
+> 
+> 1. have already participated in a pilot study, a previous study (pre-registered as "AI and Society: Spotting Targeted Advertising"), and/or the pilot of that
+previous study.
+> 2. did not complete the survey.
+> 3. have a relative extraversion percentile of 50%. For these participants no extraversion personality type can be assigned.
+> 4. provided different answers for the two questions asking them to indicate their age in the first and second personality questionnaire.
+> 5. fail an instruction check for the targeting detection task thrice. After the instructions, but before starting the targeting detection task, participants are
+shown a multiple-choice question probing whether they correctly understood the targeting detection task (1 correct vs. 3 incorrect response options). If a
+participant selects an incorrect option, the question is displayed again up to two more times; the response options are sorted differently each time. After
+three incorrect responses, the participants can continue the study, but will be excluded from all analyses.
+
+
+## 1) have already participated previously
+
+These participants were screened out by Prolific Academic's platform, so no need to do it here.
+
+
+
+## 2) did not complete the survey
+
+```{r exclude_incomplete}
+# list of uncompleted IDs (participants who entered the survey but did not reach the last question)
+tbl_exclude_incomplete <- anti_join(select(condition, id),
+                                    {
+                                      checkopen %>%
+                                        filter(item_name == "page1") %>%
+                                        select(id)
+                                    }, by = "id") %>%
+  mutate(exclude_incomplete = TRUE)
+
+```
+
+
+## 3) have a relative extraversion percentile of 50%. For these participants no extraversion personality type can be assigned
+
+```{r exclude_extr_prctl_50}
+tbl_exclude_extr_prctl_50 <- tbl_participants %>%
+  filter(extr_prctl == .5) %>%
+  select(id) %>%
+  mutate(exclude_extr_prctl_50 = TRUE)
+
+```
+
+
+## 4) provided different answers for the two questions asking them to indicate their age in the first and second personality questionnaire
+
+```{r exclude_age_diff}
+tbl_exclude_age_diff <- tbl_age %>%
+  filter(age_ATI != age_extr) %>%
+  select(id) %>%
+  mutate(exclude_age_diff = TRUE)
+
+```
+
+
+## 5) fail an instruction check for the targeting detection task thrice
+
+```{r exclude_instruction_check}
+tbl_answer_key <- tribble(
+  ~item_name,                       ~correct,
+   "multiplechoice_comprehension1",  2,
+   "multiplechoice_comprehension2",  4,
+   "multiplechoice_comprehension3",  1,
+)
+
+tbl_multiplechoice_comprehension <- check %>%
+  select(id, item_name, answer, displaycount) %>%
+  filter(str_detect(item_name, "^multiple")) %>%
+  left_join(tbl_answer_key, by = "item_name") %>%
+  mutate(correct = answer == correct) %>%
+  filter(not_na(answer)) %>%
+  group_by(id) %>%
+  summarize(failed_n = sum(correct == FALSE))
+
+tbl_multiplechoice_comprehension %>%
+  pull(failed_n) %>%
+  table %>%
+  kable
+
+tbl_exclude_instruction_check <-
+  tbl_multiplechoice_comprehension %>%
+  filter(failed_n == 3) %>%
+  select(id) %>%
+  mutate(exclude_instruction_check = TRUE)
+
+```
+
+
+## Combine exclusion criteria
+
+```{r tbl_exclude}
+tbl_exclude <- list(
+  tbl_exclude_incomplete,
+  tbl_exclude_extr_prctl_50,
+  tbl_exclude_age_diff,
+  tbl_exclude_instruction_check
+) %>%
+  reduce(full_join, by = "id")
+
+# get treatment of exclusions
+exclude_treatment <-
+  inner_join(tbl_treatment, tbl_exclude, by = "id")
+
+n_exclude <- tbl_exclude %>%
+  pull(id) %>%
+  n_distinct
+
+```
+
+`r n_exclude` participants will be excluded.
+
+
+## Exclude `r n_exclude` participants
+
+```{r exclude}
+tbl_participants <- tbl_participants %>%
+  anti_join(tbl_exclude, by = "id") %>% 
+  assert(not_na, everything())
+tbl_participants
+
+tbl_targeting <- tbl_targeting %>%
+  anti_join(tbl_exclude, by = "id") %>% 
+  assert(not_na, everything())
+tbl_targeting
+
+# exclude_treatment %>%
+#   group_by_at(setdiff(names(exclude_treatment), c("id", "condition"))) %>%
+#   count(name = "n")
+
+tbl_exclusion_summary <- data.frame(
+  condition = c(
+    "control, with questionnaire",
+    "control, without questionnaire",
+    "boosting, with questionnaire",
+    "boosting, without questionnaire"
+  ),
+  consented_n = c(nrow(filter(
+    condition, condition == 4
+  )),
+  nrow(filter(
+    condition, condition == 3
+  )),
+  nrow(filter(
+    condition, condition == 2
+  )),
+  nrow(filter(
+    condition, condition == 1
+  ))),
+  incomplete = c(nrow(
+    filter(
+      exclude_treatment,
+      exclude_incomplete == TRUE &
+        condition == "control, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_incomplete == TRUE &
+        condition == "control, definition"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_incomplete == TRUE &
+        condition == "boosting, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_incomplete == TRUE &
+        condition == "boosting, definition"
+    )
+  )),
+  fiftieth_percentile = c(nrow(
+    filter(
+      exclude_treatment,
+      exclude_extr_prctl_50 == TRUE &
+        condition == "control, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_extr_prctl_50 == TRUE &
+        condition == "control, definition"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_extr_prctl_50 == TRUE &
+        condition == "boosting, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_extr_prctl_50 == TRUE &
+        condition == "boosting, definition"
+    )
+  )),
+  age_mismatch = c(nrow(
+    filter(
+      exclude_treatment,
+      exclude_age_diff == TRUE &
+        condition == "control, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_age_diff == TRUE & condition == "control, definition"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_age_diff == TRUE &
+        condition == "boosting, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_age_diff == TRUE &
+        condition == "boosting, definition"
+    )
+  )),
+  failed_compreh_check = c(nrow(
+    filter(
+      exclude_treatment,
+      exclude_instruction_check == TRUE &
+        condition == "control, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_instruction_check == TRUE &
+        condition == "control, definition"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_instruction_check == TRUE &
+        condition == "boosting, definition + test"
+    )
+  ),
+  nrow(
+    filter(
+      exclude_treatment,
+      exclude_instruction_check == TRUE &
+        condition == "boosting, definition"
+    )
+  )),
+  final_n = c(nrow(
+    filter(tbl_participants, condition == "control, definition + test")
+  ),
+  nrow(
+    filter(tbl_participants, condition == "control, definition")
+  ),
+  nrow(
+    filter(tbl_participants, condition == "boosting, definition + test")
+  ),
+  nrow(
+    filter(tbl_participants, condition == "boosting, definition")
+  ))
+) %>%
+  mutate(prop_retained = round(final_n / consented_n, 2))
+
+kable(tbl_exclusion_summary)
+
+```
+
+
+
+# Check overlap id's in both data frames
+
+Participants need to appear in both data frames.
+
+```{r check_id_overlap}
+expect_equal(nrow(anti_join(tbl_participants, tbl_targeting)), 0)
+expect_equal(nrow(anti_join(tbl_targeting, tbl_participants)), 0)
+
+```
+
+
+
+# Save data to disk
+
+```{r save_data}
+write_rds(tbl_participants,
+          here("output/study2/tbl_participants.rds"),
+          compress = "gz")
+write_csv(tbl_participants,
+          here("output/study2/tbl_participants.csv"))
+
+write_rds(tbl_targeting,
+          here("output/study2/tbl_targeting.rds"),
+          compress = "gz")
+write_csv(tbl_targeting, here("output/study2/tbl_targeting.csv"))
+
+```
