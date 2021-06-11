@@ -1,21 +1,5 @@
-// generated with brms 2.14.0
+// generated with brms 2.15.0
 functions {
-  /* turn a vector into a matrix of defined dimension 
-   * stores elements in row major order
-   * Args: 
-   *   X: a vector 
-   *   N: first dimension of the desired matrix
-   *   K: second dimension of the desired matrix 
-   * Returns: 
-   *   a matrix of dimension N x K 
-   */ 
-  matrix as_matrix(vector X, int N, int K) { 
-    matrix[N, K] Y; 
-    for (i in 1:N) {
-      Y[i] = to_row_vector(X[((i - 1) * K + 1):(i * K)]); 
-    }
-    return Y; 
-  } 
  /* compute correlated group-level effects
   * Args: 
   *   z: matrix of unscaled group-level effects
@@ -87,7 +71,7 @@ transformed parameters {
   r_2_4 = r_2[, 4];
 }
 model {
-  // likelihood including all constants
+  // likelihood including constants
   if (!prior_only) {
     // initialize linear predictor term
     vector[N] mu = Intercept + rep_vector(0.0, N);
@@ -97,7 +81,7 @@ model {
     }
     target += bernoulli_logit_glm_lpmf(Y | Xc, mu, b);
   }
-  // priors including all constants
+  // priors including constants
   target += student_t_lpdf(Intercept | 3, 0, 2.5);
   target += student_t_lpdf(sd_1 | 3, 0, 2.5)
     - 1 * student_t_lccdf(0 | 3, 0, 2.5);

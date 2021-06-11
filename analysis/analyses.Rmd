@@ -56,7 +56,6 @@ tbl_targeting_performance_1 <- tbl_targeting_1 %>%
   summarize(acc = mean(dec_correct),
             conf_in_correct = mean(conf_in_correct)) %>%
   ungroup %>%
-  #REVIEW: later, move quartiles to make_data?
   mutate(
     extr_quartiles = case_when(
       extr_prctl <= .25 ~ 1,
@@ -262,7 +261,6 @@ fig_exp1_main <- fig_exp1_main +
   theme(legend.position = "right",
         legend.text = element_text(size = 10))
 fig_exp1_main
-#TODO: ensure that numbers round up to 100; use the function from the survey repo
 
 save_plot(
   here("output/study1/figures/fig_exp1_main.pdf"),
@@ -276,6 +274,62 @@ save_plot(
 
 
 ## SI figures
+
+### Personality norm data
+
+```{r fig_exp1_SI_norms, fig.width=6.5, fig.height=7}
+dat_exp1_SI_norms <- tbl_participants_1 %>% 
+  select(id, extr_prctl, ATI_prctl) %>% 
+  pivot_longer(-id, names_to = "var", values_to = "percentile") %>% 
+  mutate(var_str = ifelse(
+    var == "extr_prctl",
+    "Extraversion",
+    str_wrap("Affinity to Technology Interaction (ATI)", width = 30)
+  ))
+  
+fig_exp1_SI_norms <- dat_exp1_SI_norms %>%   
+  ggplot(aes(x = percentile)) +
+  coord_fixed(ratio = 1/50) +
+  scale_x_continuous("Percentile based on norm data") +
+  scale_y_continuous("Number of participabts") +
+  geom_histogram(fill = "orange", color = "black", bins = 10) +
+  facet_wrap(~ fct_rev(var_str)) +
+  theme(panel.spacing = unit(.75, "cm"))
+#fig_exp1_SI_norms
+
+fig_exp1_SI_norms_ECDF <- dat_exp1_SI_norms %>%
+  ggplot(aes(x = percentile)) +
+  coord_fixed(ratio = 1) +
+  scale_x_continuous("Percentile based on norm data",
+                     limits = c(0, 1)) +
+  scale_y_continuous("Empirical cumulative
+    density function (ECDF)",
+    limits = c(0, 1)) +
+  geom_abline(intercept = 0,
+              slope = 1,
+              linetype = "dashed") +
+  stat_ecdf(color = "blue", size = .8, pad = FALSE) +
+  facet_wrap(~ fct_rev(var_str)) +
+  theme(panel.spacing = unit(.75, "cm"))
+#fig_exp1_SI_norms_ECDF
+
+
+fig_exp1_SI_norms_combined <- plot_grid(
+  fig_exp1_SI_norms, 
+  fig_exp1_SI_norms_ECDF, 
+  ncol = 1,
+  align = "hv")
+fig_exp1_SI_norms_combined
+
+save_plot(
+  here("output/study1/figures/fig_exp1_SI_norms.pdf"),
+  fig_exp1_SI_norms_combined,
+  base_width = 6.5,
+  base_height = 7
+)
+
+```
+
 
 ### Accuracy (ECDF)
 
@@ -302,6 +356,7 @@ fig_exp1_ecdf <- tbl_targeting_performance_1 %>%
 #### Accuracy vs. continous extraversion percentile
 
 ```{r fig_exp1_extr_prctl}
+set.seed(12345)
 fig_exp1_extr_prctl <- tbl_targeting_performance_1 %>%
   left_join(df_exp1_conditions) %>%
   rename(boosting_str = condition_str) %>% 
@@ -428,6 +483,7 @@ save_plot(
 #### Confidence-AUC vs. continous extraversion percentile
 
 ```{r fig_exp1_auc_extr_prctl}
+set.seed(12345)
 fig_exp1_auc_extr_prctl <- fig_exp1_extr_prctl +
   aes(y = AUC) +
   scale_y_continuous("AUC")
@@ -438,6 +494,7 @@ fig_exp1_auc_extr_prctl <- fig_exp1_extr_prctl +
 #### Confidence-AUC vs. personality percentile quartiles
 
 ```{r fig_exp1_auc_extr_quartiles}
+set.seed(12345)
 fig_exp1_auc_extr_quartiles <- tbl_targeting_performance_1 %>%
   left_join(df_exp1_conditions) %>%
   rename(boosting_str = condition_str) %>% 
@@ -548,6 +605,7 @@ fig_exp1_education_acc <- fig_exp1_extr_quartiles_base %+%
 #### Confidence-AUC vs. education
 
 ```{r fig_exp1_education_auc}
+set.seed(12345)
 fig_exp1_education_auc <- fig_exp1_auc_extr_quartiles %+%
   {fig_exp1_auc_extr_quartiles$data %>% 
       left_join(dat_exp1_education_n) %>%
@@ -613,7 +671,6 @@ tbl_targeting_performance_2 <- tbl_targeting_2 %>%
   summarize(acc = mean(dec_correct),
             conf_in_correct = mean(conf_in_correct)) %>%
   ungroup %>% 
-  #REVIEW: later, move quartiles to make_data?
   mutate(
     extr_quartiles = case_when(
       extr_prctl <= .25 ~ 1,
@@ -631,7 +688,7 @@ tbl_targeting_performance_2 <- tbl_targeting_2 %>%
         "strongly\nextraverted\n(4th quartile)"
       )
     )
-  ) %>% 
+  ) %>%
   left_join(select(tbl_participants_2, id, starts_with("education")))
 
 ```
@@ -870,7 +927,6 @@ fig_exp2_main <- fig_exp2_main +
     reverse = FALSE,
     direction = "horizontal"
   ))
-#TODO: ensure that numbers round up to 100; use the function from the survey repo
 
 fig_exp2_main
 
@@ -886,6 +942,48 @@ save_plot(
 
 
 ## SI figures
+
+### Personality norm data
+
+```{r fig_exp2_SI_extr_norms, fig.width=6.5, fig.height=7}
+dat_exp2_SI_norms <- tbl_participants_2 %>% 
+  select(id, extr_prctl, ATI_prctl) %>% 
+  pivot_longer(-id, names_to = "var", values_to = "percentile") %>% 
+  mutate(var_str = ifelse(
+    var == "extr_prctl",
+    "Extraversion",
+    str_wrap("Affinity to Technology Interaction (ATI)", width = 30)
+  ))
+  
+fig_exp2_SI_norms <- fig_exp1_SI_norms %+%
+  dat_exp2_SI_norms +
+  coord_fixed(ratio = 1/250)
+#fig_exp2_SI_norms
+
+fig_exp2_SI_norms_ECDF <- fig_exp1_SI_norms_ECDF %+%
+dat_exp2_SI_norms
+#fig_exp2_SI_norms_ECDF
+
+
+fig_exp2_SI_norms_both <- plot_grid(
+  fig_exp2_SI_norms, 
+  fig_exp2_SI_norms_ECDF, 
+  ncol = 1,
+  align = "hv")
+fig_exp2_SI_norms_both
+
+save_plot(
+  here("output/study2/figures/fig_exp2_SI_norms.pdf"),
+  fig_exp2_SI_norms_both,
+  base_width = 6.5,
+  base_height = 7
+)
+
+```
+
+
+
+
 
 ### Accuracy (ECDF)
 
@@ -910,6 +1008,7 @@ fig_exp2_ecdf <- tbl_targeting_performance_2 %>%
 #### Accuracy vs. continous extraversion percentile
 
 ```{r fig_exp2_extr_prctl}
+set.seed(12345)
 fig_exp2_extr_prctl <- fig_exp1_extr_prctl %+% {
   left_join(tbl_targeting_performance_2, df_exp2_conditions) %>%
     mutate(questionnaire_str = str_c(questionnaire_str, " questionnaire"))
@@ -998,6 +1097,7 @@ save_plot(
 #### Confidence-AUC vs. continous extraversion percentile
 
 ```{r fig_exp2_auc_extr_prctl}
+set.seed(12345)
 fig_exp2_auc_extr_prctl <- fig_exp2_extr_prctl +
   aes(y = AUC) +
   scale_y_continuous("AUC")
@@ -1009,6 +1109,7 @@ fig_exp2_auc_extr_prctl
 #### Confidence-AUC vs. personality percentile quartiles
 
 ```{r fig_exp2_auc_extr_quartiles}
+set.seed(12345)
 fig_exp2_auc_extr_quartiles <- tbl_targeting_performance_2 %>%
   left_join(df_exp2_conditions) %>%
   ggplot(aes(extr_quartiles, AUC, color = boosting_str)) +
@@ -1134,6 +1235,7 @@ fig_exp2_education_acc
 #### Confidence-AUC vs. education
 
 ```{r fig_exp2_education_auc}
+set.seed(12345)
 fig_exp2_education_auc <- fig_exp2_auc_extr_quartiles %+%
   {
     fig_exp2_auc_extr_quartiles$data %>%
@@ -1195,6 +1297,103 @@ save_plot(
   base_width = 9,
   base_height = 10
 )
+
+```
+
+
+
+# Using in-sample extraversion percentiles to score performance
+
+```{r dat_extr_prctl_in_sample}
+dat_targeting_1_in_sample <- tbl_targeting_1 %>%
+  mutate(
+    extr_prctl_in_sample = percent_rank(extr),
+    extr_type_in_sample = case_when(
+      extr_prctl_in_sample > .5 ~ "extr",
+      extr_prctl_in_sample < .5 ~ "intr",
+      TRUE ~ "NA"
+    ) %>% factor(levels = c("extr", "intr")),
+    stimuli_is_targeted_in_sample = case_when(
+      stimuli_target == extr_type_in_sample ~ TRUE,
+      stimuli_target != extr_type_in_sample ~ FALSE,
+      TRUE ~ NA
+    ),
+    stimuli_is_targeted_in_sample_fct = factor(stimuli_is_targeted_in_sample * 1, c(1, 0)),
+    dec_correct_in_sample = (stimuli_is_targeted_in_sample == dec) * 1
+  )
+
+tbl_targeting_performance_1 <-
+  tbl_targeting_performance_1 %>% full_join({
+    group_by(dat_targeting_1_in_sample, id, extr_type_in_sample) %>%
+      summarize(
+        extr_prctl_in_sample = first(extr_prctl_in_sample),
+        acc_in_sample = mean(dec_correct_in_sample)
+      )
+  }, by = "id")
+
+
+dat_targeting_2_in_sample <- tbl_targeting_2 %>%
+  mutate(
+    extr_prctl_in_sample = percent_rank(extr),
+    extr_type_in_sample = case_when(
+      extr_prctl_in_sample > .5 ~ "extr",
+      extr_prctl_in_sample < .5 ~ "intr",
+      TRUE ~ "NA"
+    ) %>% factor(levels = c("extr", "intr")),
+    stimuli_is_targeted_in_sample = case_when(
+      stimuli_target == extr_type_in_sample ~ TRUE,
+      stimuli_target != extr_type_in_sample ~ FALSE,
+      TRUE ~ NA
+    ),
+    stimuli_is_targeted_in_sample_fct = factor(stimuli_is_targeted_in_sample * 1, c(1, 0)),
+    dec_correct_in_sample = (stimuli_is_targeted_in_sample == dec) * 1
+  )
+
+tbl_targeting_performance_2 <-
+  tbl_targeting_performance_2 %>% full_join({
+    group_by(dat_targeting_2_in_sample, id, extr_type_in_sample) %>%
+      summarize(
+        extr_prctl_in_sample = first(extr_prctl_in_sample),
+        acc_in_sample = mean(dec_correct_in_sample)
+      )
+  }, by = "id")
+
+
+dat_extr_prctl_in_sample <- list({
+  tbl_targeting_performance_1 %>%
+    filter(condition == "control") %>%
+    select(id, extr_prctl, acc, extr_type, contains("in_sample"))
+},
+{
+  tbl_targeting_performance_2 %>%
+    filter(relevance == "control") %>%
+    select(id, extr_prctl, acc, extr_type, contains("in_sample"))
+}) %>%
+  reduce(bind_rows) %>%
+  assert(not_na, extr_type, extr_type_in_sample)
+
+```
+
+
+```{r extr_prctl_in_sample}
+nrow(dat_extr_prctl_in_sample)
+
+dat_extr_prctl_in_sample %>% 
+  group_by(extr_type, extr_type_in_sample) %>% 
+  count %>% 
+  kable
+  
+filter(dat_extr_prctl_in_sample, extr_type != extr_type_in_sample) %>% 
+  group_by(sign(acc_in_sample - acc)) %>% 
+  count()
+
+filter(dat_extr_prctl_in_sample, extr_type != extr_type_in_sample) %>% 
+  group_by(sign(acc_in_sample - acc), acc, acc_in_sample) %>% 
+  count()
+
+dat_extr_prctl_in_sample %>% 
+  filter(extr_type != extr_type_in_sample) %>% 
+  summarize(median(acc_in_sample - acc))
 
 ```
 

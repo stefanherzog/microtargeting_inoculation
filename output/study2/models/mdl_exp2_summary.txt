@@ -8,27 +8,27 @@ Samples: 4 chains, each with iter = 8000; warmup = 4000; thin = 1;
 Group-Level Effects: 
 ~id (Number of levels: 544) 
               Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-sd(Intercept)     1.40      0.07     1.27     1.55 1.00     6481    10495
+sd(Intercept)     1.40      0.07     1.27     1.55 1.00     6152    10037
 
 ~stimuli (Number of levels: 10) 
                                               Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-sd(Intercept)                                     0.41      0.12     0.25     0.77 1.00     5748     9121
-sd(relevance1)                                    0.07      0.07     0.00     0.28 1.00    11664     9450
-sd(questionnaire1)                                0.28      0.13     0.04     0.65 1.00     5596     5495
-sd(relevance1:questionnaire1)                     0.58      0.26     0.11     1.31 1.00     6164     5441
-cor(Intercept,relevance1)                         0.21      0.50    -0.73     0.88 1.00    28097    11260
-cor(Intercept,questionnaire1)                     0.26      0.37    -0.50     0.81 1.00    17768    12090
-cor(relevance1,questionnaire1)                    0.01      0.51    -0.80     0.80 1.00     7536    11636
-cor(Intercept,relevance1:questionnaire1)         -0.30      0.35    -0.82     0.45 1.00    16977    12192
-cor(relevance1,relevance1:questionnaire1)        -0.02      0.51    -0.82     0.80 1.00     7980    10940
-cor(questionnaire1,relevance1:questionnaire1)     0.01      0.43    -0.74     0.72 1.00    12689    13190
+sd(Intercept)                                     0.41      0.12     0.25     0.77 1.00     4342     7611
+sd(relevance1)                                    0.07      0.06     0.00     0.28 1.00     9937     6944
+sd(questionnaire1)                                0.28      0.13     0.05     0.64 1.00     5235     4153
+sd(relevance1:questionnaire1)                     0.58      0.26     0.10     1.32 1.00     5242     4135
+cor(Intercept,relevance1)                         0.21      0.50    -0.73     0.88 1.00    20004    10396
+cor(Intercept,questionnaire1)                     0.27      0.36    -0.49     0.81 1.00    13771    11535
+cor(relevance1,questionnaire1)                    0.01      0.50    -0.80     0.82 1.00     5925    10781
+cor(Intercept,relevance1:questionnaire1)         -0.31      0.35    -0.82     0.44 1.00    14273    11177
+cor(relevance1,relevance1:questionnaire1)        -0.01      0.51    -0.82     0.80 1.00     6887    10321
+cor(questionnaire1,relevance1:questionnaire1)     0.02      0.43    -0.73     0.73 1.00    10467    12535
 
 Population-Level Effects: 
                           Estimate Est.Error l-95% CI u-95% CI Rhat Bulk_ESS Tail_ESS
-Intercept                     1.03      0.15     0.71     1.36 1.00     4626     7232
-relevance1                    0.48      0.15     0.20     0.77 1.00     7812    10679
-questionnaire1                0.25      0.17    -0.10     0.60 1.00     7967    10199
-relevance1:questionnaire1     0.72      0.35     0.00     1.44 1.00     8380    10576
+Intercept                     1.03      0.15     0.69     1.34 1.00     3497     5590
+relevance1                    0.48      0.15     0.19     0.77 1.00     4468     7879
+questionnaire1                0.24      0.17    -0.11     0.59 1.00     5883     8847
+relevance1:questionnaire1     0.72      0.35    -0.01     1.42 1.00     5783     8725
 
 Samples were drawn using sampling(NUTS). For each parameter, Bulk_ESS
 and Tail_ESS are effective sample size measures, and Rhat is the potential

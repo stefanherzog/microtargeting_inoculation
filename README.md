@@ -1,6 +1,6 @@
-# A simple self-reflection intervention boosts the detection of targeted advertising
+# Boosting people’s ability to detect microtargeted advertising
 
-Data and code for manuscript "A simple self-reflection intervention boosts the detection of targeted advertising".
+Data and code for manuscript "Boosting people’s ability to detect microtargeted advertising".
 All data & code to reproduce the analyses reported in this paper are available in this repo.
 
 
